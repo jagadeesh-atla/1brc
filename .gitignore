@@ -1,0 +1,5 @@
+bin/
+a.out
+perf.data*
+*.txt
+*.out
