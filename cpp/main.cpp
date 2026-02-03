@@ -1,51 +1,21 @@
 #include <algorithm>
-#include <cstdio>
 #include <format>
 #include <fstream>
+#include <functional>
 #include <iomanip>
-#include <ios>
 #include <iostream>
-#include <sstream>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
 using namespace std;
 
-struct Mesaurment {
-    string city;
-    int temperature;
-
-    Mesaurment(const string& line) {
-        auto it = line.find(';');
-        city = line.substr(0, it);
-        temperature = parse_int(line, it);
-    }
-
-    int parse_int(const string& line, size_t from) {
-        int res = 0;
-        int sign = line[from] == '-' ? -1 : 1;
-        for (size_t i = from + 1; i < line.size(); i++) {
-            if (line[i] != '.') {
-                res = res * 10 + (line[i] - '0');
-            }
-        }
-        return sign * res;
-    }
-
-    string to_string() const {
-        ostringstream oss;
-        oss << "City: " << city << ", Temperature: " << fixed << setprecision(1)
-            << temperature / 10.0;
-        return oss.str();
-    }
-};
-
 struct Aggregate {
     int max;
     int min;
     int count;
-    long sum;
+    long long sum;
 
     string to_string() const {
         double mini = min / 10.0;
@@ -56,22 +26,54 @@ struct Aggregate {
     }
 };
 
+struct CustomHash {
+    using is_transparent = void;
+
+    size_t operator()(std::string_view sv) const noexcept {
+        return std::hash<std::string_view>{}(sv);
+    }
+
+    size_t operator()(const std::string& s) const noexcept {
+        return std::hash<std::string_view>{}(s);
+    }
+};
+
 struct Map {
-    unordered_map<string, Aggregate> mp;
+    unordered_map<string, Aggregate, CustomHash, equal_to<>> mp;
 
-    void add(const string& line) {
-        auto [city, temperature] = Mesaurment(line);
-        if (mp.count(city)) {
-            mp[city].max = max(mp[city].max, temperature);
-            mp[city].min = min(mp[city].min, temperature);
-            mp[city].sum += temperature;
-            mp[city].count += 1;
+    void add(char* line) {
+        char* semicolon = line;
+        while (*semicolon != ';') {
+            semicolon++;
+        }
 
+        string_view city(line, semicolon - line);
+
+        int temperature = 0;
+        int sign = 1;
+        char* p = semicolon + 1;
+
+        if (*p == '-') {
+            sign = -1;
+            p++;
+        }
+
+        // Assumes format X.X or XX.X
+        if (p[1] == '.') {
+            temperature = (p[0] - '0') * 10 + (p[2] - '0');
         } else {
-            mp[city].max = temperature;
-            mp[city].min = temperature;
-            mp[city].sum = temperature;
-            mp[city].count = 1;
+            temperature = (p[0] - '0') * 100 + (p[1] - '0') * 10 + (p[3] - '0');
+        }
+        temperature *= sign;
+
+        auto it = mp.find(city);
+        if (it != mp.end()) {
+            it->second.max = max(it->second.max, temperature);
+            it->second.min = min(it->second.min, temperature);
+            it->second.sum += temperature;
+            it->second.count += 1;
+        } else {
+            mp.emplace(string(city), Aggregate{temperature, temperature, 1, (long)temperature});
         }
     }
 
@@ -99,20 +101,18 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    char* filepath = argv[1];
-    ifstream input(filepath);
-    if (not input.is_open()) {
-        cerr << "[ERR] Could not open file " << filepath << ".\n";
+    ifstream input(argv[1]);
+    if (!input.is_open()) {
+        cerr << "[ERR] Could not open file " << argv[1] << ".\n";
         return 1;
     }
 
     Map map;
-    string line;
-    line.reserve(128);
-    while (getline(input, line)) {
-        map.add(line);
+    char buffer[1024];
+    while (input.getline(buffer, sizeof(buffer))) {
+        map.add(buffer);
     }
 
-    map.print();
+    if (argc > 3) map.print();
     input.close();
 }
