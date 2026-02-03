@@ -1,11 +1,14 @@
-#include <cstdint>
+#include <algorithm>
 #include <cstdio>
+#include <format>
 #include <fstream>
 #include <iomanip>
+#include <ios>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 using namespace std;
 
@@ -30,7 +33,7 @@ struct Mesaurment {
         return sign * res;
     }
 
-    string to_string() {
+    string to_string() const {
         ostringstream oss;
         oss << "City: " << city << ", Temperature: " << fixed << setprecision(1)
             << temperature / 10.0;
@@ -42,17 +45,14 @@ struct Aggregate {
     int max;
     int min;
     int count;
-    int64_t sum;
+    long sum;
 
-    string to_string() {
-        ostringstream oss;
-        double maxi = double(max) / 10.0;
-        double mini = double(min) / 10.0;
-        double mean = double(sum) / (10.0 * double(count));
+    string to_string() const {
+        double mini = min / 10.0;
+        double mean = (double)sum / (10.0 * count);
+        double maxi = max / 10.0;
 
-        oss << "<MIN|MEAN|MAX>: " << setw(4) << fixed << setprecision(1) << mini << "| " << mean
-            << "|" << maxi;
-        return oss.str();
+        return format("{:7.1f} ; {:7.1f} ; {:7.1f}", mini, mean, maxi);
     }
 };
 
@@ -75,9 +75,20 @@ struct Map {
         }
     }
 
-    void print() {
-        for (auto [city, agg] : mp) {
-            cout << "City: " << city << "; " << agg.to_string() << endl;
+    void print() const {
+        vector<pair<string, Aggregate>> data;
+        data.reserve(mp.size());
+
+        for (const auto& it : mp) data.push_back(it);
+
+        sort(data.begin(), data.end(),
+             [](const auto& a, const auto& b) { return a.first < b.first; });
+
+        size_t maxWidth = 0;
+        for (const auto& [city, _] : data) maxWidth = max(maxWidth, city.size());
+
+        for (const auto& [city, agg] : data) {
+            cout << setw((int)maxWidth) << left << city << ": " << agg.to_string() << '\n';
         }
     }
 };
