@@ -1,6 +1,12 @@
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include <algorithm>
+#include <cerrno>
+#include <cstring>
 #include <format>
-#include <fstream>
 #include <functional>
 #include <iomanip>
 #include <iostream>
@@ -101,18 +107,38 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    ifstream input(argv[1]);
-    if (!input.is_open()) {
+    int fd = open(argv[1], O_RDONLY);
+    if (fd < 0) {
         cerr << "[ERR] Could not open file " << argv[1] << ".\n";
         return 1;
     }
 
+    struct stat st;
+    fstat(fd, &st);
+
+    size_t sz = st.st_size;
+    char* data = (char*)mmap(nullptr, sz, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (data == MAP_FAILED) {
+        cerr << "[ERR] mmap failed: " << strerror(errno) << ".\n";
+        close(fd);
+        return 1;
+    }
+    close(fd);
+    madvise(data, sz, MADV_SEQUENTIAL);
+
+    char* cur = data;
+    char* end = data + sz;
+
     Map map;
-    char buffer[1024];
-    while (input.getline(buffer, sizeof(buffer))) {
-        map.add(buffer);
+    while (cur < end) {
+        char* nl = (char*)memchr(cur, '\n', end - cur);
+        if (!nl) nl = end;
+        map.add(cur);
+        cur = nl + 1;
     }
 
     if (argc > 3) map.print();
-    input.close();
+
+    munmap(data, sz);
+    return 0;
 }
