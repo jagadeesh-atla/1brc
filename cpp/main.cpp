@@ -12,6 +12,7 @@
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -45,7 +46,7 @@ struct CustomHash {
 };
 
 struct Map {
-    unordered_map<string, Aggregate, CustomHash, equal_to<>> mp;
+    unordered_map<string_view, Aggregate, CustomHash> mp;
 
     void add(char* line) {
         char* semicolon = line;
@@ -79,12 +80,12 @@ struct Map {
             it->second.sum += temperature;
             it->second.count += 1;
         } else {
-            mp.emplace(string(city), Aggregate{temperature, temperature, 1, (long)temperature});
+            mp.emplace(city, Aggregate{temperature, temperature, 1, temperature});
         }
     }
 
     void print() const {
-        vector<pair<string, Aggregate>> data;
+        vector<pair<string_view, Aggregate>> data;
         data.reserve(mp.size());
 
         for (const auto& it : mp) data.push_back(it);
@@ -102,8 +103,8 @@ struct Map {
 };
 
 int main(int argc, char* argv[]) {
-    if (argc != 2) {
-        cerr << "Usage: " << argv[0] << " <measurements-path>\n";
+    if (argc < 2) {
+        cerr << "Usage: " << argv[0] << " <measurements-path> [to-print]\n";
         return 1;
     }
 
@@ -124,20 +125,58 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     close(fd);
-    madvise(data, sz, MADV_SEQUENTIAL);
+    madvise(data, sz, MADV_SEQUENTIAL | MADV_WILLNEED);
 
-    char* cur = data;
-    char* end = data + sz;
+    unsigned int num_threads = std::thread::hardware_concurrency();
+    if (num_threads == 0) num_threads = 4;
 
-    Map map;
-    while (cur < end) {
-        char* nl = (char*)memchr(cur, '\n', end - cur);
-        if (!nl) nl = end;
-        map.add(cur);
-        cur = nl + 1;
+    vector<char*> boundaries(num_threads + 1);
+
+    boundaries[0] = data;
+    boundaries[num_threads] = data + sz;
+
+    for (unsigned int i = 1; i < num_threads; ++i) {
+        size_t offset = (sz / num_threads) * i;
+        char* ptr = data + offset;
+        while (ptr < data + sz && *ptr != '\n') ptr++;
+        if (ptr < data + sz) ptr++;
+        boundaries[i] = ptr;
     }
 
-    if (argc > 3) map.print();
+    vector<Map> maps(num_threads);
+    vector<thread> threads;
+
+    auto process_chunk = [](char* start, char* end, Map& map) {
+        while (start < end) {
+            char* nl = (char*)memchr(start, '\n', end - start);
+            if (!nl) nl = end;
+            map.add(start);
+            start = nl + 1;
+        }
+    };
+
+    for (unsigned int i = 0; i < num_threads; ++i) {
+        threads.emplace_back(process_chunk, boundaries[i], boundaries[i + 1], ref(maps[i]));
+    }
+
+    for (auto& t : threads) t.join();
+
+    auto& final_map = maps[0].mp;
+    for (size_t i = 1; i < maps.size(); ++i) {
+        for (const auto& [city, agg] : maps[i].mp) {
+            auto it = final_map.find(city);
+            if (it != final_map.end()) {
+                it->second.max = max(it->second.max, agg.max);
+                it->second.min = min(it->second.min, agg.min);
+                it->second.sum += agg.sum;
+                it->second.count += agg.count;
+            } else {
+                final_map.emplace(city, agg);
+            }
+        }
+    }
+
+    if (argc == 3) maps[0].print();
 
     munmap(data, sz);
     return 0;
